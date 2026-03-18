@@ -4,7 +4,7 @@ general:
   prefix: TGT:CTST
   log_dir: 'logs'   # path of logs directory
   #epics_addr_list: '129.57.86.255'  # In Hall B
-  #epics_addr_list: '127.255.255.255'  # On experimental equipment network
+  epics_addr_list: '127.255.255.255'  # On experimental equipment network
   #epics_beacon_addr_list: '127.255.255.255'
   delay: 0.5
 dat8017_i:
