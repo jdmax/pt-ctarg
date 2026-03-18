@@ -1,0 +1,30 @@
+# IOC device settings, YAML
+# With exception of 'general', each top level key defines a new ioc for that device
+general:
+  prefix: TGT:CTST
+  log_dir: 'logs'   # path of logs directory
+  #epics_addr_list: '129.57.86.255'  # In Hall B
+  #epics_addr_list: '127.255.255.255'  # On experimental equipment network
+  #epics_beacon_addr_list: '127.255.255.255'
+  delay: 0.5
+dat8017_i:
+  module: 'devices.dat8017'
+  autostart: True
+  ip: '129.57.37.137'
+  port: '502'
+  timeout: 2
+  delay: 5
+  channels: # List of PV names for each read channel of datexel in order
+    - Test_PI
+  calibration: # psi gauge range for calibration
+    Bottle_PI: 3000
+    Absorb_CI: 1
+  records:
+    Bottle_PI:
+      DESC: 'Test Pressure'
+      PREC: 3
+      EGU: 'psi'
+      HIHI: 2600
+      HIGH: 2500
+      LOW: 50
+      LOLO: 10
