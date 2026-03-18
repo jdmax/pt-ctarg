@@ -20,7 +20,7 @@ dat8017_i:
     Bottle_PI: 3000
     Absorb_CI: 1
   records:
-    Bottle_PI:
+    Test_PI:
       DESC: 'Test Pressure'
       PREC: 3
       EGU: 'psi'
