@@ -24,7 +24,7 @@ dat8017_i:
       DESC: 'Test Pressure'
       PREC: 3
       EGU: 'psi'
-      HIHI: 2600
-      HIGH: 2500
-      LOW: 50
-      LOLO: 10
+      HIHI: 100
+      HIGH: 80
+      LOW: 1
+      LOLO: 0
