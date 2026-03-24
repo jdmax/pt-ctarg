@@ -10,7 +10,7 @@ general:
 dat8017_i:
   module: 'devices.dat8017'
   autostart: True
-  ip: '129.57.37.137'
+  ip: '129.57.165.12'
   port: '502'
   timeout: 2
   delay: 5
