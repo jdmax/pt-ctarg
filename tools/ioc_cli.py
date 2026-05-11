@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IOC Monitor — interactive curses TUI for MEOP IOC screen sessions.
+IOC Commander — interactive curses TUI for Epics IOC screen sessions.
 
     python tools/ioc_cli.py
 
@@ -14,6 +14,10 @@ Keys (main view):
     a           Attach to screen session (returns on detach)
     S           Start ALL autostart IOCs
     X           Stop  ALL IOCs
+    m           Start IOC manager
+    M           Stop  IOC manager
+    R           Restart IOC manager
+    ?           Show help page
     q / Esc     Quit
 
 Keys (log / PV view):
@@ -40,8 +44,9 @@ SETTINGS_FILE = os.path.normpath(
 )
 PROJECT_ROOT = os.path.dirname(SETTINGS_FILE)
 
-REFRESH_SECS = 2          # auto-refresh interval
-LOG_TAIL     = 200        # max lines kept in log view
+REFRESH_SECS    = 2          # auto-refresh interval
+LOG_TAIL        = 200        # max lines kept in log view
+MANAGER_SCREEN  = 'ioc-manager'
 
 
 # ── Settings / log helpers ─────────────────────────────────────────────────────
@@ -88,9 +93,10 @@ def start_ioc(settings, name):
         return f'{name}: already running'
     lp = log_path(settings, name)
     os.makedirs(os.path.dirname(lp), exist_ok=True)
-    screen = Screen(name, True)
-    screen.send_commands('bash')
-    screen.send_commands(f'python master_ioc.py -i {name}')
+    subprocess.run(['screen', '-dmS', name, 'bash'], check=False)
+    time.sleep(0.5)
+    screen = Screen(name)
+    screen.send_commands(f'python {os.path.join(PROJECT_ROOT, "master_ioc.py")} -i {name}')
     screen.enable_logs(lp)
     screen.send_commands('softioc.dbl()')
     return f'{name}: started'
@@ -105,6 +111,29 @@ def restart_ioc(settings, name):
     stop_ioc(name)
     time.sleep(1)
     return start_ioc(settings, name)
+
+def manager_running():
+    return Screen(MANAGER_SCREEN).exists
+
+def start_manager():
+    if manager_running():
+        return 'manager: already running'
+    subprocess.run(['screen', '-dmS', MANAGER_SCREEN, 'bash'], check=False)
+    time.sleep(0.5)
+    screen = Screen(MANAGER_SCREEN)
+    screen.send_commands(f'cd {PROJECT_ROOT} && python ioc_manager.py')
+    return 'manager: started'
+
+def stop_manager():
+    if not manager_running():
+        return 'manager: not running'
+    subprocess.run(['screen', '-XS', MANAGER_SCREEN, 'kill'], check=False)
+    return 'manager: stopped'
+
+def restart_manager():
+    stop_manager()
+    time.sleep(1)
+    return start_manager()
 
 
 # ── Colour pair indices ────────────────────────────────────────────────────────
@@ -179,7 +208,14 @@ def draw_main(win, settings, names, selected, status_msg, prefix):
     h, w = win.getmaxyx()
     win.erase()
 
-    draw_title(win, f' {prefix} IOC Monitor ')
+    mgr_label = 'MANAGER: running' if manager_running() else 'MANAGER: stopped'
+    _, w = win.getmaxyx()
+    title    = f' {prefix} IOC Monitor '
+    mgr_attr = (curses.color_pair(C_RUNNING) if manager_running()
+                else curses.color_pair(C_STOPPED))
+    draw_title(win, title)
+    safe_addstr(win, 0, w - len(mgr_label) - 2, mgr_label,
+                curses.color_pair(C_TITLE) | curses.A_BOLD | mgr_attr)
 
     # Column widths
     col_name = max(len(n) for n in names) + 2
@@ -237,11 +273,95 @@ def draw_main(win, settings, names, selected, status_msg, prefix):
                         f'{auto_label:<{col_auto}}', auto_attr)
             safe_addstr(win, row, 1+col_name+col_st+col_auto, last_line)
 
-    draw_help(win, [('↑↓','select'),('↵','pv list'),('s','start'),('x','stop'),
-                    ('r','restart'),('l','logs'),('a','attach'),
-                    ('S','start all'),('X','stop all'),('q','quit')])
+    draw_help(win, [('s','start'),('x','stop'),('l','logs'),('a','attach'),
+                    ('m','mgr start'),('M','mgr stop'),('?','help'),('q','quit')])
     draw_status(win, f'  {status_msg}   (auto-refresh {REFRESH_SECS}s)')
     win.refresh()
+
+
+# ── Help view ──────────────────────────────────────────────────────────────────
+HELP_LINES = [
+    ('Main view', [
+        ('↑ / ↓',       'Select IOC'),
+        ('Enter',        'View live PV values for selected IOC'),
+        ('s',            'Start selected IOC'),
+        ('x',            'Stop selected IOC'),
+        ('r',            'Restart selected IOC'),
+        ('l',            'View log for selected IOC'),
+        ('a',            'Attach to screen session (Ctrl+A D to detach)'),
+        ('S',            'Start ALL autostart IOCs'),
+        ('X',            'Stop ALL running IOCs'),
+        ('m',            'Start IOC manager'),
+        ('M',            'Stop IOC manager'),
+        ('R',            'Restart IOC manager'),
+        ('?',            'Show this help page'),
+        ('q / Esc',      'Quit'),
+    ]),
+    ('Log view', [
+        ('↑ / ↓',        'Scroll one line'),
+        ('PgUp / PgDn',  'Scroll one page'),
+        ('l / q / Esc',  'Return to main view'),
+    ]),
+    ('PV view', [
+        ('↑ / ↓',        'Scroll one line'),
+        ('PgUp / PgDn',  'Scroll one page'),
+        ('f',            'Force immediate refresh'),
+        ('d',            'Request dbl() from IOC (re-list PVs)'),
+        ('q / Esc',       'Return to main view'),
+    ]),
+]
+
+def help_view(stdscr, prefix):
+    """Full-screen key reference. Returns when user exits."""
+    curses.curs_set(0)
+    scroll = 0
+
+    # Build flat list of display lines
+    content = []
+    for section, entries in HELP_LINES:
+        content.append(('header', section))
+        for key, desc in entries:
+            content.append(('entry', key, desc))
+        content.append(('blank',))
+
+    while True:
+        h, w = stdscr.getmaxyx()
+        stdscr.erase()
+        draw_title(stdscr, f' {prefix} — Help ')
+
+        view_rows  = h - 4
+        max_scroll = max(0, len(content) - view_rows)
+        scroll     = min(scroll, max_scroll)
+
+        col_key = 18
+        for i, item in enumerate(content[scroll:scroll + view_rows]):
+            row = i + 1
+            if item[0] == 'header':
+                safe_addstr(stdscr, row, 2, item[1],
+                            curses.color_pair(C_HEADER) | curses.A_BOLD)
+            elif item[0] == 'entry':
+                _, key, desc = item
+                safe_addstr(stdscr, row, 4,            f'{key:<{col_key}}',
+                            curses.color_pair(C_DIM))
+                safe_addstr(stdscr, row, 4 + col_key,  desc[:w - col_key - 6])
+
+        draw_help(stdscr, [('↑↓','scroll'),('q/Esc','back')])
+        draw_status(stdscr, f'  Key reference  —  {len(content)} lines')
+        stdscr.refresh()
+
+        stdscr.timeout(REFRESH_SECS * 1000)
+        key = stdscr.getch()
+
+        if key in (ord('q'), ord('?'), 27):
+            return
+        elif key == curses.KEY_UP:
+            scroll = max(0, scroll - 1)
+        elif key == curses.KEY_DOWN:
+            scroll = min(max_scroll, scroll + 1)
+        elif key == curses.KEY_PPAGE:
+            scroll = max(0, scroll - view_rows)
+        elif key == curses.KEY_NPAGE:
+            scroll = min(max_scroll, scroll + view_rows)
 
 
 # ── Log view ───────────────────────────────────────────────────────────────────
@@ -291,6 +411,7 @@ def suspended(stdscr, fn):
     """Run fn() with curses suspended, then restore the display."""
     curses.endwin()
     result = fn()
+    stdscr.clear()
     stdscr.refresh()
     curses.doupdate()
     return result
@@ -463,7 +584,7 @@ def pv_view(stdscr, settings, name, prefix):
             last_fetch = 0.0          # force immediate refresh on next loop
         elif key == ord('d'):
             if ioc_running(name):
-                Screen(name).send_commands('softioc.dbl()')
+                Screen(name).send_commands('dbl()')
                 status = f'Sent dbl() to {name} — refreshing…'
                 time.sleep(1)         # give the IOC a moment to write to the log
                 last_fetch = 0.0
@@ -537,6 +658,14 @@ def tui(stdscr):
                 msgs = [stop_ioc(n) for n in names if ioc_running(n)]
                 return ' | '.join(msgs) or 'Nothing running'
             status = suspended(stdscr, stop_all)
+        elif key == ord('m'):
+            status = suspended(stdscr, start_manager)
+        elif key == ord('M'):
+            status = suspended(stdscr, stop_manager)
+        elif key == ord('R'):
+            status = suspended(stdscr, restart_manager)
+        elif key == ord('?'):
+            help_view(stdscr, prefix)
 
 
 def main():
